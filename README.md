@@ -1,6 +1,6 @@
 # pgs_archive_bot
 
-The Telegram bot behind the [Postgrowth Singapore resources archive](https://hclovecraft00.github.io/pgs-archive/) ([site code](https://github.com/hclovecraft00/pgs-archive)).
+The Telegram bot behind the [Postgrowth Singapore resources archive](https://postgrowthsg.github.io/) ([site code](https://github.com/postgrowthsg/postgrowthsg.github.io)).
 
 Admins forward a link (or a PDF) to the bot, tap a type and up to two themes, and it's added to the **Entries** tab of a Google Sheet as live. The website reads that tab, so it shows up within a few minutes.
 
