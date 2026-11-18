@@ -16,7 +16,7 @@ const MAX_RUN_MS = 5 * 60 * 1000;      // Apps Script runs are capped at 6 minut
 const PDF_FOLDER_NAME = 'PGS Archive PDFs';
 
 const TABS = {
-  entries: { name: 'Entries', headers: ['ID', 'Status', 'Title', 'Link', 'Type', 'Theme 1', 'Theme 2', 'Extra tags', 'Date', 'Authors', 'Description', 'Shared by', 'Date added', 'Archive link'] },
+  entries: { name: 'Entries', headers: ['ID', 'Status', 'Title', 'Link', 'Type', 'Theme 1', 'Theme 2', 'Location', 'Date', 'Authors', 'Description', 'Shared by', 'Date added', 'Archive link'] },
   themes: { name: 'Themes', headers: ['Theme', 'Description', 'Date added'] },
   types: { name: 'Types', headers: ['Type', 'Dot shape'] },
   private: { name: 'Private', headers: ['ID', 'Shared by', 'OK to credit', 'Added by', 'Telegram message', 'Notes'] },
@@ -24,6 +24,8 @@ const TABS = {
   summaries: { name: 'Summaries', headers: ['ID', 'Date added', 'Title', 'Link', 'Theme 1', 'One-liner', 'Summary', 'Shared by', 'Used?', 'Used in'] },
   users: { name: 'Users', headers: ['Telegram ID', 'Name', 'Username', 'Status', 'First seen', 'Day', 'Shares today', 'New themes today'] },
 };
+// Where a resource is about: one region, or blank. The same list is the dropdown in the Sheet (LocationSetup.gs) and drives the site's Singapore & Asia lens.
+const LOCATIONS = ['Singapore', 'Southeast Asia', 'East Asia', 'South Asia', 'Central Asia', 'West Asia', 'Europe', 'Africa', 'Oceania', 'North America', 'South America'];
 const E = {}; TABS.entries.headers.forEach((h, i) => { E[h] = i + 1; });
 const U = {}; TABS.users.headers.forEach((h, i) => { U[h] = i + 1; });
 
@@ -328,7 +330,7 @@ function startFromLink(msg, rawUrl, member) {
   const meta = readPage(url);
   const draft = {
     link: url, title: (meta.title || '').slice(0, 300), authors: meta.authors || '', date: meta.date || '', desc: meta.desc || '', pageDesc: meta.desc || '',
-    type: '', t1: '', t2: '', extra: '', sharedBy: '', okCredit: '', msgRef: `${chatId}:${msg.message_id}`,
+    type: '', t1: '', t2: '', loc: '', sharedBy: '', okCredit: '', msgRef: `${chatId}:${msg.message_id}`,
     awaiting: '', step: 'type', themes: themeNames(), dupOf: dup ? dup.id : '',
     member: !!member, line: '', summary: '', newThemes: [],
   };
@@ -348,7 +350,7 @@ function startFromPdf(msg, doc) {
   const saved = DriveApp.getFolderById(props.getProperty('PDF_FOLDER_ID')).createFile(blob);
   const title = (msg.caption || '').trim() || (doc.file_name || '').replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim();
   const draft = {
-    link: saved.getUrl(), title, authors: '', date: '', desc: '', type: 'research', t1: '', t2: '', extra: '',
+    link: saved.getUrl(), title, authors: '', date: '', desc: '', type: 'research', t1: '', t2: '', loc: '',
     sharedBy: '', okCredit: '', msgRef: `${chatId}:${msg.message_id}`, awaiting: '', step: 'type', themes: themeNames(), pdf: true, dupOf: '',
   };
   saveDraft(chatId, draft);
@@ -401,12 +403,12 @@ function cardText(d) {
   if (bits.length) lines.push(escapeHtml(bits.join(' · ')));
   const themes = [d.t1, d.t2].filter(Boolean);
   if (themes.length) lines.push('Themes: ' + escapeHtml(themes.join(' + ')));
-  if (d.extra) lines.push('Tags: ' + escapeHtml(d.extra));
+  if (d.loc) lines.push('Location: ' + escapeHtml(d.loc));
   if (d.desc) lines.push('\n' + escapeHtml(d.desc.length > 300 ? d.desc.slice(0, 297) + '…' : d.desc));
   if (d.summary) lines.push('\n📝 <i>Private summary</i> (' + d.summary.length + ' characters, only the team sees it)');
   if (d.sharedBy) lines.push(`\nShared by ${escapeHtml(d.sharedBy)}${d.okCredit === 'yes' ? ' (credited on the site)' : d.okCredit === 'no' ? ' (not credited)' : ''}`);
   lines.push('');
-  lines.push({ type: 'What kind of resource is it?' + (d.member ? '\n\n<i>I answer quickly while we’re chatting. If I’ve gone quiet for a few minutes, please give me up to a minute.</i>' : ''), t1: 'Pick its main theme.', t2: 'A second theme? (optional)',
+  lines.push({ type: 'What kind of resource is it?' + (d.member ? '\n\n<i>I answer quickly while we’re chatting. If I’ve gone quiet for a few minutes, please give me up to a minute.</i>' : ''), t1: 'Pick its main theme.', t2: 'A second theme? (optional)', loc: 'Where is it about? <i>Optional.</i> Pick one region, or tap <b>Skip</b> if it isn’t about a particular place.',
     line: `In a line, why is this worth reading? <i>Optional.</i> It shows on the site. Type it, or tap <b>Skip</b>. (Up to ${MAX_LINE} characters.)`,
     summary: `Want to add a few lines on what it says? <i>Optional.</i> Only the Postgrowth team sees this. Type it, or tap <b>Skip</b>.`,
     review: 'Anything to add? Then tap <b>Done</b>.', credit: `OK to credit ${escapeHtml(d.sharedBy)} on the site?` }[d.step] || '');
@@ -423,17 +425,18 @@ function cardButtons(d) {
     if (d.step === 't2') extra.push(b('Skip', 't2:skip'));
     return rows(list, 2).concat([extra, [b('← Back', 'back')]]);
   }
+  if (d.step === 'loc') return rows(LOCATIONS.map((n, i) => b(n, 'lo:' + i)), 2).concat([[b('Skip', 'lo:skip')], [b('← Back', 'back')]]);
   if (d.step === 'credit') return [[b('Yes, credit them', 'cr:yes'), b('No', 'cr:no')]];
   if (d.step === 'line' || d.step === 'summary') return [[b('Skip', 'sk:' + d.step)], [b('← Back', 'back')]];
   if (d.member) return [
     [b('💬 One-liner', 'ed:line'), b('📝 Summary', 'ed:summary')],
     [b('✏️ Title', 'ed:title'), b('🙋 Shared by', 'ed:shared')],
-    [b('← Themes', 'back')],
+    [b('📍 Location', 'ed:loc'), b('← Themes', 'back')],
     [b('✅ Done', 'done'), b('✖️ Cancel', 'x')],
   ];
   return [
     [b('✏️ Title', 'ed:title'), b('📝 Description', 'ed:desc')],
-    [b('🙋 Shared by', 'ed:shared'), b('🏷 Extra tags', 'ed:tags')],
+    [b('🙋 Shared by', 'ed:shared'), b('📍 Location', 'ed:loc')],
     [b('📅 Date / authors', 'ed:date'), b('🧾 Private summary', 'ed:summary')],
     [b('← Themes', 'back')],
     [b('✅ Done', 'done'), b('✖️ Cancel', 'x')],
@@ -470,7 +473,7 @@ function handleTap(tap, member) {
     return tg('editMessageReplyMarkup', { chat_id: chatId, message_id: tap.message.message_id, reply_markup: { inline_keyboard: [] } });
   }
   if (data === 'x') { clearDraft(chatId); return tg('editMessageText', { chat_id: chatId, message_id: d.cardId, text: 'Cancelled. Nothing was saved.' }); }
-  if (data === 'back') { d.step = ['review', 't2', 'line', 'summary'].includes(d.step) ? 't1' : 'type'; d.awaiting = ''; saveDraft(chatId, d); return showCard(chatId, d); }
+  if (data === 'back') { d.step = ['review', 't2', 'loc', 'line', 'summary'].includes(d.step) ? 't1' : 'type'; d.awaiting = ''; d.fromReview = false; saveDraft(chatId, d); return showCard(chatId, d); }
 
   if (data.startsWith('ty:')) { d.type = TYPES[+data.slice(3)][0]; d.step = d.t1 ? 'review' : 't1'; }
   else if (data.startsWith('t1:') || data.startsWith('t2:')) {
@@ -478,11 +481,19 @@ function handleTap(tap, member) {
     if (val === 'new') { d.awaiting = 'new' + which; saveDraft(chatId, d); return send(chatId, 'Type the new theme’s name (a few words). It’ll be added to the Themes list.'); }
     if (val === 'skip') d.t2 = '';
     else d[which] = d.themes[+val];
-    d.step = which === 't1' ? 't2' : (d.member ? 'line' : 'review');
+    d.step = which === 't1' ? 't2' : (d.editing ? 'review' : 'loc');
     if (d.step === 'line') d.awaiting = 'line';
+  }
+  else if (data.startsWith('lo:')) {
+    const v = data.slice(3);
+    d.loc = v === 'skip' ? '' : (LOCATIONS[+v] || '');
+    d.step = (d.editing || d.fromReview) ? 'review' : (d.member ? 'line' : 'review');
+    d.fromReview = false;
+    d.awaiting = d.step === 'line' ? 'line' : '';
   }
   else if (data === 'sk:line') { d.step = 'summary'; d.awaiting = 'summary'; }
   else if (data === 'sk:summary') { d.step = 'review'; d.awaiting = ''; }
+  else if (data === 'ed:loc') { d.step = 'loc'; d.awaiting = ''; d.fromReview = true; }   // opened from the review card, so go back there
   else if (data.startsWith('ed:')) {
     const what = data.slice(3);
     d.awaiting = what;
@@ -493,7 +504,6 @@ function handleTap(tap, member) {
       line: `Type your one-liner (up to ${MAX_LINE} characters), or “-” to clear it.`,
       summary: `Type your summary (up to ${MAX_SUMMARY} characters). Only the team sees it. “-” clears it.`,
       shared: 'Who shared it? (Name as it should appear.)',
-      tags: 'Type extra tags, separated by commas, or “-” to clear.',
       date: 'Type the year (or year-month like 2023-07), then optionally “;” and the authors. E.g. <code>2021; Jason Hickel</code>. Use “-” to clear.',
     }[what]);
   }
@@ -521,7 +531,6 @@ function answerQuestion(chatId, d, text, member) {
     d.summary = t;
     if (d.step === 'summary') d.step = 'review';
   }
-  else if (what === 'tags') d.extra = v.split(',').map(s => s.trim()).filter(Boolean).join(', ');
   else if (what === 'date') {
     const [date, authors] = v.split(';').map(s => (s || '').trim());
     d.date = v ? date : ''; if (authors !== undefined) d.authors = authors;
@@ -548,7 +557,7 @@ function answerQuestion(chatId, d, text, member) {
       d.themes.push(theme);
     }
     d[what.slice(3)] = theme;
-    d.step = what === 'newt1' ? 't2' : (d.member ? 'line' : 'review');
+    d.step = what === 'newt1' ? 't2' : (d.editing ? 'review' : 'loc');
     if (d.step === 'line') d.awaiting = 'line';
   }
   saveDraft(chatId, d);
@@ -567,7 +576,7 @@ function finish(chatId, d, member) {
     const row = rowOf(d.editing);
     if (!row) return send(chatId, `Couldn’t find ${d.editing} in the Sheet any more.`);
     const keep = sheet.getRange(row, 1, 1, TABS.entries.headers.length).getValues()[0];
-    const vals = [d.editing, keep[E.Status - 1], cell(clean(d.title)), d.link, d.type, cell(d.t1), cell(d.t2), cell(d.extra), cell(d.date), cell(d.authors), cell(d.desc), cell(credit),
+    const vals = [d.editing, keep[E.Status - 1], cell(clean(d.title)), d.link, d.type, cell(d.t1), cell(d.t2), cell(d.loc), cell(d.date), cell(d.authors), cell(d.desc), cell(credit),
       keep[E['Date added'] - 1], d.link === keep[E.Link - 1] ? keep[E['Archive link'] - 1] : ''];
     sheet.getRange(row, 1, 1, vals.length).setValues([vals]);
     if (d.sharedBy) tab('private').appendRow([d.editing, cell(d.sharedBy), d.okCredit, adminName(chatId), d.msgRef, 'edited']);
@@ -576,7 +585,7 @@ function finish(chatId, d, member) {
   } else {
     const id = nextId();
     const live = !member || member.status === 'trusted';          // a person's first link waits for a team member
-    sheet.appendRow([id, live ? 'live' : 'pending', cell(clean(d.title)), d.link, d.type, cell(d.t1), cell(d.t2), cell(d.extra), cell(d.date), cell(d.authors), cell(d.desc), cell(credit), today(), d.pdf ? '(PDF on Drive)' : '']);
+    sheet.appendRow([id, live ? 'live' : 'pending', cell(clean(d.title)), d.link, d.type, cell(d.t1), cell(d.t2), cell(d.loc), cell(d.date), cell(d.authors), cell(d.desc), cell(credit), today(), d.pdf ? '(PDF on Drive)' : '']);
     const by = member ? `${cell(member.name)}${member.username ? ' (@' + cell(member.username) + ')' : ''} [${member.id}]` : adminName(chatId);
     tab('private').appendRow([id, cell(d.sharedBy), d.okCredit, by, d.msgRef, member && !live ? 'first link: waiting for approval' : '']);
     if (d.summary) addSummary(id, d, d.sharedBy || (member ? member.name : adminName(chatId)));
@@ -650,7 +659,7 @@ function startEdit(chatId, id) {
   const r = tab('entries').getRange(row, 1, 1, TABS.entries.headers.length).getValues()[0];
   const date = r[E.Date - 1] instanceof Date ? Utilities.formatDate(r[E.Date - 1], TZ, 'yyyy') : String(r[E.Date - 1] || '');
   const d = { editing: id, title: r[E.Title - 1], link: r[E.Link - 1], type: r[E.Type - 1], t1: r[E['Theme 1'] - 1], t2: r[E['Theme 2'] - 1],
-    extra: r[E['Extra tags'] - 1], date, authors: r[E.Authors - 1], desc: r[E.Description - 1], sharedBy: r[E['Shared by'] - 1],
+    loc: r[E.Location - 1], date, authors: r[E.Authors - 1], desc: r[E.Description - 1], sharedBy: r[E['Shared by'] - 1],
     okCredit: r[E['Shared by'] - 1] ? 'yes' : '', step: 'review', awaiting: '', themes: themeNames(), msgRef: '', dupOf: '' };
   saveDraft(chatId, d);
   showCard(chatId, d, true);
